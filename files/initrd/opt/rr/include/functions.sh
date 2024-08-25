@@ -222,7 +222,7 @@ function _get_fastest() {
   URL="$(echo "${fastest}" | awk '{print $1}')"
   SPD="$(echo "${fastest}" | awk '{print $2}')" # It is a float type
   echo "${URL}"
-  [ $(printf "%.0f" ${SPD:-999}) -ge 999 ] && return 1 || return 0
+  [ $(echo ${SPD:-999} | cut -d. -f1) -ge 999 ] && return 1 || return 0
 }
 
 ###############################################################################
@@ -232,14 +232,14 @@ function _sort_netif() {
   local ETHLIST=""
   local ETHX="$(ls /sys/class/net/ 2>/dev/null | grep eth)" # real network cards list
   for ETH in ${ETHX}; do
-    local MAC="$(cat /sys/class/net/${ETH}/address 2>/dev/null | sed 's/://g' | tr '[:upper:]' '[:lower:]')"
+    local MAC="$(cat /sys/class/net/${ETH}/address 2>/dev/null | sed 's/://g; s/.*/\L&/')"
     local BUS="$(ethtool -i ${ETH} 2>/dev/null | grep bus-info | cut -d' ' -f2)"
     ETHLIST="${ETHLIST}${BUS} ${MAC} ${ETH}\n"
   done
   local ETHLISTTMPM=""
   local ETHLISTTMPB="$(echo -e "${ETHLIST}" | sort)"
   if [ -n "${1}" ]; then
-    local MACS="$(echo "${1}" | sed 's/://g' | tr '[:upper:]' '[:lower:]' | tr ',' ' ')"
+    local MACS="$(echo "${1}" | sed 's/://g; s/,/ /g; s/.*/\L&/')"
     for MACX in ${MACS}; do
       ETHLISTTMPM="${ETHLISTTMPM}$(echo -e "${ETHLISTTMPB}" | grep "${MACX}")\n"
       ETHLISTTMPB="$(echo -e "${ETHLISTTMPB}" | grep -v "${MACX}")\n"

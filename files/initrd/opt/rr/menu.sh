@@ -346,9 +346,8 @@ function productversMenu() {
   done <<<$(readConfigMap "addons" "${USER_CONFIG_FILE}")
   # Rewrite modules
   writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-  while read ID DESC; do
-    writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-  done <<<$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")
+  L="$(echo "$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")" | awk '{print "modules."$1":"}')"
+  mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
   # Remove old files
   rm -f "${ORI_ZIMAGE_FILE}" "${ORI_RDGZ_FILE}" "${MOD_ZIMAGE_FILE}" "${MOD_RDGZ_FILE}" >/dev/null 2>&1 || true
   rm -f "${PART1_PATH}/grub_cksum.syno" "${PART1_PATH}/GRUB_VER" "${PART2_PATH}/"* >/dev/null 2>&1 || true
@@ -424,9 +423,8 @@ function setConfigFromDSM() {
   done <<<$(readConfigMap "addons" "${USER_CONFIG_FILE}")
   # Rebuild modules
   writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-  while read ID DESC; do
-    writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-  done <<<$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")
+  L="$(echo "$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")" | awk '{print "modules."$1":"}')"
+  mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
   touch ${PART1_PATH}/.build
   return 0
 }
@@ -702,19 +700,16 @@ function moduleMenu() {
         RET=$?
         case ${RET} in
         0) # ok-button
-          resp=$(cat ${TMP_PATH}/resp)
           writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-          for ID in ${resp}; do
-            writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-          done
+          L="$(for I in $(cat ${TMP_PATH}/resp 2>/dev/null); do echo "modules.${I}:"; done)"
+          mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
           touch ${PART1_PATH}/.build
           break
           ;;
         3) # extra-button
           writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-          while read ID DESC; do
-            writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-          done <<<${ALLMODULES}
+          L="$(echo "${ALLMODULES}" | awk '{print "modules."$1":"}')"
+          mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
           touch ${PART1_PATH}/.build
           ;;
         2) # help-button
@@ -885,6 +880,7 @@ function cmdlineMenu() {
       MSG+="$(TEXT " * \Z4SataPortMap=??\Zn\n    Sata Port Map(Not apply to DT models).\n")"
       MSG+="$(TEXT " * \Z4DiskIdxMap=??\Zn\n    Disk Index Map, Modify disk name sequence(Not apply to DT models).\n")"
       MSG+="$(TEXT " * \Z4ahci_remap=4>5:5>8:12>16\Zn\n    Remap data port sequence(Not apply to DT models).\n")"
+      MSG+="$(TEXT " * \Z4scsi_mod.scan=sync\Zn\n    Synchronize scanning of devices on the SCSI bus during system startup(Resolve the disorderly order of HBA disks).\n")"
       MSG+="$(TEXT " * \Z4i915.enable_guc=2\Zn\n    Enable the GuC firmware on Intel graphics hardware.(value: 1,2 or 3)\n")"
       MSG+="$(TEXT " * \Z4i915.max_vfs=7\Zn\n    Set the maximum number of virtual functions (VFs) that can be created for Intel graphics hardware.\n")"
       MSG+="$(TEXT " * \Z4i915.modeset=0\Zn\n    Disable the kernel mode setting (KMS) feature of the i915 driver.\n")"
@@ -913,6 +909,8 @@ function cmdlineMenu() {
         0) # ok-button
           NAME="$(cat "${TMP_PATH}/resp" | sed -n '1p')"
           VALUE="$(cat "${TMP_PATH}/resp" | sed -n '2p')"
+          [[ "${NAME}" = *= ]] && NAME="${NAME%?}"
+          [[ "${VALUE}" = =* ]] && VALUE="${VALUE#*=}"
           if [ -z "${NAME//\"/}" ]; then
             DIALOG --title "$(TEXT "Cmdline")" \
               --yesno "$(TEXT "Invalid parameter name, retry?")" 0 0
@@ -1058,6 +1056,8 @@ function synoinfoMenu() {
         0) # ok-button
           NAME="$(cat "${TMP_PATH}/resp" | sed -n '1p')"
           VALUE="$(cat "${TMP_PATH}/resp" | sed -n '2p')"
+          [[ "${NAME}" = *= ]] && NAME="${NAME%?}"
+          [[ "${VALUE}" = =* ]] && VALUE="${VALUE#*=}"
           if [ -z "${NAME//\"/}" ]; then
             DIALOG --title "$(TEXT "Synoinfo")" \
               --yesno "$(TEXT "Invalid parameter name, retry?")" 0 0
@@ -1858,8 +1858,8 @@ function tryRecoveryDSM() {
     return
   fi
 
-  if [ -f "${TMP_PATH}/mdX/etc/synoinfo.conf" ]; then
-    R_SN="$(_get_conf_kv SN "${TMP_PATH}/mdX/etc/synoinfo.conf")"
+  if [ -f "${TMP_PATH}/mdX/etc.defaults/synoinfo.conf" ]; then
+    R_SN="$(_get_conf_kv SN "${TMP_PATH}/mdX/etc.defaults/synoinfo.conf")"
     [ -n "${R_SN}" ] && SN=${R_SN} && writeConfigKey "sn" "${SN}" "${USER_CONFIG_FILE}"
   fi
 
@@ -2688,7 +2688,8 @@ function advancedMenu() {
       cp -Rf "$(dirname ${WORK_PATH})" "${RDXZ_PATH}/"
       (
         cd "${RDXZ_PATH}"
-        find . 2>/dev/null | cpio -o -H newc -R root:root | pv -n -s $(du -sb ${RDXZ_PATH} | awk '{print $1}') | xz -9 --check=crc32 >"${RR_RAMDISK_FILE}"
+        RDSIZE=$(du -sb ${RDXZ_PATH} 2>/dev/null | awk '{print $1}')
+        find . 2>/dev/null | cpio -o -H newc -R root:root | pv -n -s ${RDSIZE:-1} | xz -9 --check=crc32 >"${RR_RAMDISK_FILE}"
       ) 2>&1 | DIALOG --title "$(TEXT "Advanced")" \
         --gauge "$(TEXT "Saving ...\n(It usually takes 5-10 minutes, please be patient and wait.)")" 8 100
       rm -rf "${RDXZ_PATH}"
@@ -2760,6 +2761,20 @@ function languageMenu() {
   LANGUAGE=${resp}
   echo "${LANGUAGE}.UTF-8" >${PART1_PATH}/.locale
   export LC_ALL="${LANGUAGE}.UTF-8"
+}
+
+# Shows language to user choose one
+function timezoneMenu() {
+  OPTIONS="$(find /usr/share/zoneinfo/right -type f | cut -d '/' -f 6- | sort | uniq | xargs)"
+  DIALOG \
+    --default-item "${LAYOUT}" --no-items --menu "$(TEXT "Choose a timezone")" 0 0 0 ${OPTIONS} \
+    2>${TMP_PATH}/resp
+  [ $? -ne 0 ] && return
+  resp=$(cat ${TMP_PATH}/resp 2>/dev/null)
+  [ -z "${resp}" ] && return
+  TIMEZONE=${resp}
+  echo "${TIMEZONE}" >${PART1_PATH}/.timezone
+  ln -sf "/usr/share/zoneinfo/right/${TIMEZONE}" /etc/localtime
 }
 
 ###############################################################################
@@ -3007,9 +3022,8 @@ function updateRR() {
           KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kpre" "${WORK_PATH}/platforms.yml")"
           if [ -n "${PLATFORM}" -a -n "${KVER}" ]; then
             writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-            while read ID DESC; do
-              writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-            done <<<$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")
+            L="$(echo "$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")" | awk '{print "modules."$1":"}')"
+            mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
           fi
         fi
       fi
@@ -3144,9 +3158,8 @@ function updateModules() {
     KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kpre" "${WORK_PATH}/platforms.yml")"
     if [ -n "${PLATFORM}" -a -n "${KVER}" ]; then
       writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-      while read ID DESC; do
-        writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-      done <<<$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")
+      L="$(echo "$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")" | awk '{print "modules."$1":"}')"
+      mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
     fi
   fi
   rm -rf "${TMP_PATH}/update"
@@ -3266,9 +3279,8 @@ function updateCKs() {
     KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kpre" "${WORK_PATH}/platforms.yml")"
     if [ -n "${PLATFORM}" -a -n "${KVER}" ]; then
       writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-      while read ID DESC; do
-        writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-      done <<<$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")
+      L="$(echo "$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")" | awk '{print "modules."$1":"}')"
+      mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
     fi
   fi
   rm -rf "${TMP_PATH}/update"
@@ -3511,6 +3523,7 @@ else
       echo "b \"$(TEXT "Boot the loader")\"" >>"${TMP_PATH}/menu"
     fi
     echo "l \"$(TEXT "Choose a language")\"" >>"${TMP_PATH}/menu"
+    echo "z \"$(TEXT "Choose a timezone")\"" >>"${TMP_PATH}/menu"
     echo "k \"$(TEXT "Choose a keymap")\"" >>"${TMP_PATH}/menu"
     if [ 0$(du -sm ${PART3_PATH}/dl 2>/dev/null | awk '{printf $1}') -gt 1 ]; then
       echo "c \"$(TEXT "Clean disk cache")\"" >>"${TMP_PATH}/menu"
@@ -3547,9 +3560,8 @@ else
       fi
       if [ -n "${PLATFORM}" -a -n "${KVER}" ]; then
         writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-        while read ID DESC; do
-          writeConfigKey "modules.\"${ID}\"" "" "${USER_CONFIG_FILE}"
-        done <<<$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")
+        L="$(echo "$(getAllModules "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}")" | awk '{print "modules."$1":"}')"
+        mergeConfigStr p "${L}" "${USER_CONFIG_FILE}"
       fi
       touch ${PART1_PATH}/.build
 
@@ -3584,6 +3596,10 @@ else
       ;;
     l)
       languageMenu
+      NEXT="m"
+      ;;
+    z)
+      timezoneMenu
       NEXT="m"
       ;;
     k)
